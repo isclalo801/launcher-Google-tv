@@ -33,6 +33,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.input.key.onKeyEvent
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Shadow
 import androidx.compose.ui.platform.LocalContext
@@ -57,6 +58,10 @@ import java.util.Locale
 
 class MainActivity : ComponentActivity() {
 
+    companion object {
+        var activeInstance: MainActivity? = null
+    }
+
     private lateinit var repository: LauncherRepository
     private var webServer: TvRemoteWebServer? = null
 
@@ -64,10 +69,8 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         repository = LauncherRepository(this)
 
-        // Iniciar el servidor web HTTP para el control remoto del celular
-        webServer = TvRemoteWebServer(this, repository).apply {
-            start()
-        }
+        // Asegurar que el servidor web HTTP esté activo para el control remoto del celular
+        webServer = TvRemoteWebServer.ensureStarted(this, repository)
 
         setContent {
             TclLauncherTheme(darkTheme = true) {
@@ -96,9 +99,22 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    override fun onResume() {
+        super.onResume()
+        activeInstance = this
+    }
+
+    override fun onPause() {
+        super.onPause()
+        if (activeInstance == this) {
+            activeInstance = null
+        }
+    }
+
     override fun onDestroy() {
         super.onDestroy()
-        webServer?.stop()
+        // NOTA CRÍTICA: No detenemos webServer aquí para que el control remoto PWA
+        // siga funcionando en segundo plano mientras el usuario está viendo Netflix, YouTube, etc.
     }
 }
 
@@ -131,6 +147,8 @@ fun LauncherMainScreen(
     var currentDate by remember { mutableStateOf("23 OCT '26") }
 
     val firstCapsuleFocusRequester = remember { FocusRequester() }
+    val topBarFocusRequester = remember { FocusRequester() }
+    val categoryRowFocusRequester = remember { FocusRequester() }
 
     val refreshData = {
         activeProfile = repository.getActiveProfile()
@@ -240,8 +258,22 @@ fun LauncherMainScreen(
             horizontalArrangement = Arrangement.spacedBy(18.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
+            val topBarModifier = Modifier.onKeyEvent { keyEvent ->
+                if (keyEvent.nativeKeyEvent.action == android.view.KeyEvent.ACTION_DOWN &&
+                    keyEvent.nativeKeyEvent.keyCode == android.view.KeyEvent.KEYCODE_DPAD_DOWN
+                ) {
+                    try {
+                        firstCapsuleFocusRequester.requestFocus()
+                    } catch (_: Exception) {}
+                    true
+                } else {
+                    false
+                }
+            }
+
             // Icono 1: Entradas TV / Selector de Perfil
             TopActionIconButton(
+                modifier = topBarModifier,
                 icon = Icons.Default.Input,
                 label = "",
                 onClick = { showProfileDialog = true }
@@ -249,6 +281,7 @@ fun LauncherMainScreen(
 
             // Icono 2: Ajustes TV (Centro de Control)
             TopActionIconButton(
+                modifier = topBarModifier,
                 icon = Icons.Default.Settings,
                 label = "",
                 onClick = { showControlCenterDialog = true }
@@ -256,6 +289,7 @@ fun LauncherMainScreen(
 
             // Icono 3: Search (Con fondo blanco sólido como en la foto de referencia)
             TopActionIconButton(
+                modifier = topBarModifier.focusRequester(topBarFocusRequester),
                 icon = Icons.Default.Search,
                 label = "Search",
                 isAlwaysHighlighted = true,
@@ -274,6 +308,31 @@ fun LauncherMainScreen(
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
 
+            val getCapsuleModifier = { index: Int ->
+                (if (index == 0) Modifier.focusRequester(firstCapsuleFocusRequester) else Modifier)
+                    .onKeyEvent { keyEvent ->
+                        if (keyEvent.nativeKeyEvent.action == android.view.KeyEvent.ACTION_DOWN) {
+                            when (keyEvent.nativeKeyEvent.keyCode) {
+                                android.view.KeyEvent.KEYCODE_DPAD_UP -> {
+                                    try {
+                                        topBarFocusRequester.requestFocus()
+                                    } catch (_: Exception) {}
+                                    true
+                                }
+                                android.view.KeyEvent.KEYCODE_DPAD_DOWN -> {
+                                    try {
+                                        categoryRowFocusRequester.requestFocus()
+                                    } catch (_: Exception) {}
+                                    true
+                                }
+                                else -> false
+                            }
+                        } else {
+                            false
+                        }
+                    }
+            }
+
             // FILA ÚNICA DE CÁPSULAS OVALADAS FROSTED GLASS (178x88dp)
             LazyRow(
                 modifier = Modifier
@@ -287,7 +346,7 @@ fun LauncherMainScreen(
                         if (lastWatchedList.isEmpty()) {
                             itemsIndexed(quickShortcuts.take(6)) { index, shortcut ->
                                 FrostedCapsuleCard(
-                                    modifier = if (index == 0) Modifier.focusRequester(firstCapsuleFocusRequester) else Modifier,
+                                    modifier = getCapsuleModifier(index),
                                     onClick = {
                                         onLaunchApp(shortcut.packageName, shortcut.title, shortcut.subtitle, shortcut.deepLinkUri, shortcut.accentColorHex, shortcut.profileIndex)
                                         refreshData()
@@ -302,7 +361,7 @@ fun LauncherMainScreen(
                         } else {
                             itemsIndexed(lastWatchedList) { index, item ->
                                 FrostedCapsuleCard(
-                                    modifier = if (index == 0) Modifier.focusRequester(firstCapsuleFocusRequester) else Modifier,
+                                    modifier = getCapsuleModifier(index),
                                     onClick = {
                                         onLaunchApp(item.packageName, item.title, item.subtitle, item.deepLinkUri, item.badgeColorHex, item.profileIndex)
                                         refreshData()
@@ -323,7 +382,7 @@ fun LauncherMainScreen(
                     "APPS" -> {
                         itemsIndexed(installedApps) { index, app ->
                             FrostedCapsuleCard(
-                                modifier = if (index == 0) Modifier.focusRequester(firstCapsuleFocusRequester) else Modifier,
+                                modifier = getCapsuleModifier(index),
                                 onClick = {
                                     onLaunchApp(app.packageName, app.label, "Abierto desde apps", null, "#2563EB", 1)
                                     refreshData()
@@ -343,7 +402,7 @@ fun LauncherMainScreen(
                         val shortcuts = repository.getCategoryShortcuts(selectedCategory, installedApps)
                         itemsIndexed(shortcuts) { index, shortcut ->
                             FrostedCapsuleCard(
-                                modifier = if (index == 0) Modifier.focusRequester(firstCapsuleFocusRequester) else Modifier,
+                                modifier = getCapsuleModifier(index),
                                 onClick = {
                                     onLaunchApp(shortcut.packageName, shortcut.title, shortcut.subtitle, shortcut.deepLinkUri, shortcut.accentColorHex, shortcut.profileIndex)
                                     refreshData()
@@ -364,50 +423,70 @@ fun LauncherMainScreen(
                 horizontalArrangement = Arrangement.spacedBy(14.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
+                val categoryPillModifier = Modifier.onKeyEvent { keyEvent ->
+                    if (keyEvent.nativeKeyEvent.action == android.view.KeyEvent.ACTION_DOWN &&
+                        keyEvent.nativeKeyEvent.keyCode == android.view.KeyEvent.KEYCODE_DPAD_UP
+                    ) {
+                        try {
+                            firstCapsuleFocusRequester.requestFocus()
+                        } catch (_: Exception) {}
+                        true
+                    } else {
+                        false
+                    }
+                }
+
+                val getPillModifier = { cat: String ->
+                    categoryPillModifier.then(
+                        if (selectedCategory == cat) Modifier.focusRequester(categoryRowFocusRequester) else Modifier
+                    )
+                }
+
                 CategoryTabPill(
+                    modifier = getPillModifier("RECIENTES"),
                     title = "RECIENTES",
                     isSelected = selectedCategory == "RECIENTES",
-                    onFocused = { selectedCategory = "RECIENTES" },
                     onClick = { selectedCategory = "RECIENTES" }
                 )
 
                 CategoryTabPill(
+                    modifier = getPillModifier("MOVIES"),
                     title = "MOVIES",
                     isSelected = selectedCategory == "MOVIES",
-                    onFocused = { selectedCategory = "MOVIES" },
                     onClick = { selectedCategory = "MOVIES" }
                 )
 
                 CategoryTabPill(
+                    modifier = getPillModifier("APPS"),
                     title = "APPS",
                     isSelected = selectedCategory == "APPS",
-                    onFocused = { selectedCategory = "APPS" },
                     onClick = { selectedCategory = "APPS" }
                 )
 
                 CategoryTabPill(
+                    modifier = getPillModifier("MUSIC"),
                     title = "MUSIC",
                     isSelected = selectedCategory == "MUSIC",
-                    onFocused = { selectedCategory = "MUSIC" },
                     onClick = { selectedCategory = "MUSIC" }
                 )
 
                 CategoryTabPill(
+                    modifier = getPillModifier("SPORTS"),
                     title = "SPORTS",
                     isSelected = selectedCategory == "SPORTS",
-                    onFocused = { selectedCategory = "SPORTS" },
                     onClick = { selectedCategory = "SPORTS" }
                 )
 
                 CategoryTabPill(
+                    modifier = getPillModifier("NEWS"),
                     title = "NEWS",
                     isSelected = selectedCategory == "NEWS",
-                    onFocused = { selectedCategory = "NEWS" },
                     onClick = { selectedCategory = "NEWS" }
                 )
 
                 // Botón circular '+' (Wallpapers, Celular PWA, Accesos Rápidos)
                 CategoryAddButton(
+                    modifier = categoryPillModifier,
                     onClick = { showQuickAddDialog = true }
                 )
             }

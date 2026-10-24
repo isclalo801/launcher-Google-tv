@@ -10,6 +10,7 @@ import android.util.Log
 import android.view.KeyEvent
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
+import com.tcl.smartlauncher.server.TvRemoteWebServer
 import com.tcl.smartlauncher.ui.MainActivity
 
 /**
@@ -53,11 +54,26 @@ class LauncherAccessibilityService : AccessibilityService() {
          */
         fun triggerHome(): Boolean {
             val inst = activeInstance
-            return if (inst != null) {
+            if (inst != null) {
                 inst.performGlobalAction(GLOBAL_ACTION_HOME)
-            } else {
-                false
             }
+            try {
+                val context = inst?.applicationContext
+                if (context != null) {
+                    val intent = Intent(context, MainActivity::class.java).apply {
+                        addFlags(
+                            Intent.FLAG_ACTIVITY_NEW_TASK or
+                            Intent.FLAG_ACTIVITY_CLEAR_TOP or
+                            Intent.FLAG_ACTIVITY_SINGLE_TOP
+                        )
+                    }
+                    context.startActivity(intent)
+                    return true
+                }
+            } catch (e: Exception) {
+                Log.w(TAG, "Error lanzando MainActivity en triggerHome", e)
+            }
+            return inst != null
         }
 
         /**
@@ -69,11 +85,37 @@ class LauncherAccessibilityService : AccessibilityService() {
 
         /**
          * Envía un evento de tecla (D-pad Up, Down, Left, Right, Center, etc.)
+         * Soporta:
+         * 1. MainActivity en primer plano: inyección directa a la Window de la Activity.
+         * 2. Otra app en primer plano (Netflix, YouTube, Disney+, etc.):
+         *    a) Navegación por árbol de accesibilidad (findFocus, focusSearch, ACTION_FOCUS, ACTION_CLICK).
+         *    b) Gestos sintéticos (dispatchGesture: click/swipe).
+         *    c) Fallback de input keyevent vía runtime.
          */
         fun sendKeyEvent(keyCode: Int): Boolean {
+            // 1. Si nuestro propio Launcher está en primer plano, despachar directamente a la ventana
+            val mainActivity = MainActivity.activeInstance
+            if (mainActivity != null && !mainActivity.isFinishing && !mainActivity.isDestroyed) {
+                mainActivity.runOnUiThread {
+                    val downEvent = KeyEvent(KeyEvent.ACTION_DOWN, keyCode)
+                    val upEvent = KeyEvent(KeyEvent.ACTION_UP, keyCode)
+                    mainActivity.window?.decorView?.dispatchKeyEvent(downEvent)
+                    mainActivity.window?.decorView?.dispatchKeyEvent(upEvent)
+                }
+                return true
+            }
+
+            // 2. Si hay otra app en primer plano (Netflix, YouTube, Prime, etc.), usar AccessibilityService
+            val service = activeInstance
+            if (service != null) {
+                val handled = service.dispatchRemoteKeyEvent(keyCode)
+                if (handled) return true
+            }
+
+            // 3. Fallback en segundo plano: intentar input keyevent directo
             return try {
                 val process = Runtime.getRuntime().exec(arrayOf("input", "keyevent", keyCode.toString()))
-                process.waitFor()
+                process.waitFor(200, java.util.concurrent.TimeUnit.MILLISECONDS)
                 true
             } catch (e: Exception) {
                 Log.w(TAG, "No se pudo emitir input keyevent $keyCode", e)
@@ -121,6 +163,11 @@ class LauncherAccessibilityService : AccessibilityService() {
         super.onServiceConnected()
         activeInstance = this
         Log.i(TAG, "LauncherAccessibilityService conectado exitosamente.")
+        try {
+            TvRemoteWebServer.ensureStarted(applicationContext)
+        } catch (e: Exception) {
+            Log.w(TAG, "Error iniciando TvRemoteWebServer desde AccessibilityService", e)
+        }
     }
 
     override fun onDestroy() {
@@ -156,11 +203,147 @@ class LauncherAccessibilityService : AccessibilityService() {
                 return true // Evento consumido: no llega al launcher de fábrica
             } else {
                 Log.d(TAG, "Interceptación Home desactivada. Pasando evento al Launcher de Fábrica TCL.")
-                return super.onKeyEvent(event)
+                return false
             }
         }
 
-        return super.onKeyEvent(event)
+        // Para absolutamente cualquier otra tecla (DPAD_UP, DPAD_DOWN, DPAD_LEFT, DPAD_RIGHT, DPAD_CENTER, BACK, etc.)
+        // devolver inmediatamente false (no consumido) para no interferir con el control remoto físico.
+        return false
+    }
+
+    /**
+     * Inyecta navegación y clicks sobre la app activa en primer plano (Netflix, YouTube, etc.)
+     * usando las capacidades nativas de Accesibilidad.
+     */
+    fun dispatchRemoteKeyEvent(keyCode: Int): Boolean {
+        try {
+            val root = rootInActiveWindow ?: return false
+
+            val currentFocus = root.findFocus(AccessibilityNodeInfo.FOCUS_INPUT)
+                ?: root.findFocus(AccessibilityNodeInfo.FOCUS_ACCESSIBILITY)
+
+            // Caso 1: Click / OK / Enter
+            if (keyCode == KeyEvent.KEYCODE_DPAD_CENTER ||
+                keyCode == KeyEvent.KEYCODE_ENTER ||
+                keyCode == KeyEvent.KEYCODE_NUMPAD_ENTER
+            ) {
+                if (currentFocus != null) {
+                    var target: AccessibilityNodeInfo? = currentFocus
+                    while (target != null) {
+                        if (target.isClickable) {
+                            if (target.performAction(AccessibilityNodeInfo.ACTION_CLICK)) {
+                                Log.d(TAG, "Click ejecutado en nodo de accesibilidad: ${target.className}")
+                                return true
+                            }
+                        }
+                        target = target.parent
+                    }
+
+                    if (currentFocus.performAction(AccessibilityNodeInfo.ACTION_CLICK)) {
+                        return true
+                    }
+
+                    val bounds = android.graphics.Rect()
+                    currentFocus.getBoundsInScreen(bounds)
+                    if (!bounds.isEmpty && bounds.width() > 0 && bounds.height() > 0) {
+                        return performClickGesture(bounds.centerX().toFloat(), bounds.centerY().toFloat())
+                    }
+                }
+
+                // Fallback click en centro de la pantalla
+                val dm = resources.displayMetrics
+                return performClickGesture(dm.widthPixels / 2f, dm.heightPixels / 2f)
+            }
+
+            // Caso 2: Direcciones D-Pad (UP, DOWN, LEFT, RIGHT)
+            val direction = when (keyCode) {
+                KeyEvent.KEYCODE_DPAD_UP -> 33    // android.view.View.FOCUS_UP
+                KeyEvent.KEYCODE_DPAD_DOWN -> 130 // android.view.View.FOCUS_DOWN
+                KeyEvent.KEYCODE_DPAD_LEFT -> 17  // android.view.View.FOCUS_LEFT
+                KeyEvent.KEYCODE_DPAD_RIGHT -> 66 // android.view.View.FOCUS_RIGHT
+                else -> null
+            }
+
+            if (direction != null) {
+                if (currentFocus != null) {
+                    val next = currentFocus.focusSearch(direction)
+                    if (next != null) {
+                        val focused = next.performAction(AccessibilityNodeInfo.ACTION_FOCUS) ||
+                                      next.performAction(AccessibilityNodeInfo.ACTION_ACCESSIBILITY_FOCUS)
+                        if (focused) {
+                            Log.d(TAG, "Foco movido exitosamente en dirección $direction")
+                            return true
+                        }
+                    }
+
+                    var scrollParent: AccessibilityNodeInfo? = currentFocus
+                    while (scrollParent != null) {
+                        if (scrollParent.isScrollable) {
+                            val scrollAction = if (direction == 130 || direction == 66) {
+                                AccessibilityNodeInfo.ACTION_SCROLL_FORWARD
+                            } else {
+                                AccessibilityNodeInfo.ACTION_SCROLL_BACKWARD
+                            }
+                            if (scrollParent.performAction(scrollAction)) {
+                                Log.d(TAG, "Scroll ejecutado en contenedor: ${scrollParent.className}")
+                                return true
+                            }
+                        }
+                        scrollParent = scrollParent.parent
+                    }
+                }
+
+                val dm = resources.displayMetrics
+                val cx = dm.widthPixels / 2f
+                val cy = dm.heightPixels / 2f
+                val swipeDistance = 250f
+
+                return when (keyCode) {
+                    KeyEvent.KEYCODE_DPAD_UP -> performSwipeGesture(cx, cy + swipeDistance, cx, cy - swipeDistance)
+                    KeyEvent.KEYCODE_DPAD_DOWN -> performSwipeGesture(cx, cy - swipeDistance, cx, cy + swipeDistance)
+                    KeyEvent.KEYCODE_DPAD_LEFT -> performSwipeGesture(cx + swipeDistance, cy, cx - swipeDistance, cy)
+                    KeyEvent.KEYCODE_DPAD_RIGHT -> performSwipeGesture(cx - swipeDistance, cy, cx + swipeDistance, cy)
+                    else -> false
+                }
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "Error inyectando KeyEvent por accesibilidad", e)
+        }
+        return false
+    }
+
+    private fun performClickGesture(x: Float, y: Float): Boolean {
+        return try {
+            val path = android.graphics.Path().apply {
+                moveTo(x, y)
+            }
+            val stroke = android.accessibilityservice.GestureDescription.StrokeDescription(path, 0, 80)
+            val gesture = android.accessibilityservice.GestureDescription.Builder()
+                .addStroke(stroke)
+                .build()
+            dispatchGesture(gesture, null, null)
+        } catch (e: Exception) {
+            Log.w(TAG, "Error realizando click gesture", e)
+            false
+        }
+    }
+
+    private fun performSwipeGesture(startX: Float, startY: Float, endX: Float, endY: Float): Boolean {
+        return try {
+            val path = android.graphics.Path().apply {
+                moveTo(startX, startY)
+                lineTo(endX, endY)
+            }
+            val stroke = android.accessibilityservice.GestureDescription.StrokeDescription(path, 0, 200)
+            val gesture = android.accessibilityservice.GestureDescription.Builder()
+                .addStroke(stroke)
+                .build()
+            dispatchGesture(gesture, null, null)
+        } catch (e: Exception) {
+            Log.w(TAG, "Error realizando swipe gesture", e)
+            false
+        }
     }
 
     /**

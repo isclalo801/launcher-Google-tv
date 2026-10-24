@@ -37,6 +37,26 @@ class TvRemoteWebServer(
         private const val TAG = "TvRemoteWebServer"
         @Volatile
         var isServerRunning = false
+
+        @Volatile
+        private var instance: TvRemoteWebServer? = null
+
+        fun getInstance(context: Context, repository: LauncherRepository? = null): TvRemoteWebServer {
+            return instance ?: synchronized(this) {
+                instance ?: TvRemoteWebServer(
+                    context.applicationContext,
+                    repository ?: LauncherRepository(context.applicationContext)
+                ).also { instance = it }
+            }
+        }
+
+        fun ensureStarted(context: Context, repository: LauncherRepository? = null): TvRemoteWebServer {
+            val server = getInstance(context, repository)
+            if (!isServerRunning) {
+                server.start()
+            }
+            return server
+        }
     }
 
     private var serverSocket: ServerSocket? = null
@@ -397,350 +417,639 @@ class TvRemoteWebServer(
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
-  <title>TCL Remote Control</title>
+  <title>TCL TV Remote</title>
   <link rel="manifest" href="/manifest.json">
-  <meta name="theme-color" content="#0B0F17">
+  <meta name="theme-color" content="#07080B">
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
   <style>
-    * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; margin: 0; padding: 0; }
+    :root {
+      --bg: #07080B;
+      --chassis: #0E1015;
+      --card-bg: rgba(22, 24, 31, 0.78);
+      --card-border: rgba(255, 255, 255, 0.08);
+      --card-bevel: rgba(255, 255, 255, 0.14);
+      --titanium: #1C1F28;
+      --titanium-light: #282C38;
+      --accent: #2563EB;
+      --accent-glow: rgba(37, 99, 235, 0.4);
+      --text: #F8FAFC;
+      --text-muted: #8E95A5;
+      --active-green: #10B981;
+    }
+
+    * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; margin: 0; padding: 0; user-select: none; }
+    
     body {
-      background: #0B0F17;
-      color: #F8FAFC;
-      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      background: radial-gradient(circle at 50% 0%, #151922 0%, #07080B 65%);
+      color: var(--text);
+      font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", "SF Pro Text", "Segoe UI", Roboto, sans-serif;
       min-height: 100vh;
       display: flex;
       flex-direction: column;
       overflow-x: hidden;
-      padding-bottom: 74px;
+      padding-bottom: 84px;
     }
+
+    /* TOP HEADER */
     header {
-      background: rgba(19, 29, 48, 0.85);
-      backdrop-filter: blur(20px);
-      -webkit-backdrop-filter: blur(20px);
-      padding: 14px 18px;
+      background: rgba(14, 16, 21, 0.82);
+      backdrop-filter: blur(28px);
+      -webkit-backdrop-filter: blur(28px);
+      padding: 12px 18px;
       display: flex;
       justify-content: space-between;
       align-items: center;
-      border-bottom: 1px solid rgba(255,255,255,0.08);
+      border-bottom: 1px solid var(--card-border);
       position: sticky;
       top: 0;
       z-index: 50;
     }
-    .brand { display: flex; align-items: center; gap: 8px; font-weight: 800; font-size: 18px; }
-    .brand-dot { width: 10px; height: 10px; border-radius: 50%; background: #2563EB; box-shadow: 0 0 10px #2563EB; }
-    .status-badge { font-size: 11px; padding: 4px 10px; border-radius: 20px; background: rgba(37,99,235,0.2); color: #60A5FA; border: 1px solid rgba(96,165,250,0.3); }
+    .brand-wrap { display: flex; align-items: center; gap: 9px; }
+    .led-indicator {
+      width: 9px;
+      height: 9px;
+      border-radius: 50%;
+      background: var(--active-green);
+      box-shadow: 0 0 10px var(--active-green);
+      animation: pulseLed 2s infinite ease-in-out;
+    }
+    @keyframes pulseLed {
+      0%, 100% { opacity: 1; transform: scale(1); }
+      50% { opacity: 0.6; transform: scale(0.85); }
+    }
+    .brand-title { font-weight: 700; font-size: 15px; letter-spacing: -0.3px; }
+    .brand-sub { font-size: 11px; color: var(--text-muted); font-weight: 500; }
+    
+    .status-pill {
+      font-size: 11px;
+      font-weight: 600;
+      padding: 4px 10px;
+      border-radius: 20px;
+      background: rgba(16, 185, 129, 0.12);
+      color: #34D399;
+      border: 1px solid rgba(16, 185, 129, 0.28);
+      display: flex;
+      align-items: center;
+      gap: 5px;
+    }
 
-    .tab-content { display: none; padding: 16px; flex: 1; }
-    .tab-content.active { display: block; }
+    /* QUICK PROFILES STRIP */
+    .profiles-strip {
+      display: flex;
+      gap: 7px;
+      overflow-x: auto;
+      padding: 10px 18px 4px 18px;
+      scrollbar-width: none;
+    }
+    .profiles-strip::-webkit-scrollbar { display: none; }
+    .profile-pill {
+      background: rgba(255,255,255,0.05);
+      border: 1px solid rgba(255,255,255,0.08);
+      border-radius: 18px;
+      padding: 5px 12px;
+      font-size: 12px;
+      font-weight: 600;
+      color: var(--text-muted);
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      gap: 5px;
+      transition: all 0.15s ease;
+      white-space: nowrap;
+    }
+    .profile-pill.active {
+      background: rgba(255,255,255,0.14);
+      color: white;
+      border-color: rgba(255,255,255,0.25);
+      box-shadow: 0 2px 8px rgba(0,0,0,0.4);
+    }
 
-    /* Bottom Navigation */
-    nav.bottom-bar {
+    /* TAB CONTENTS */
+    .tab-content { display: none; padding: 12px 18px; flex: 1; }
+    .tab-content.active { display: block; animation: fadeIn 0.2s ease; }
+    @keyframes fadeIn { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: translateY(0); } }
+
+    /* SEGMENTED CONTROL (Modo Clickpad vs Cruceta) */
+    .segmented-control {
+      display: flex;
+      background: rgba(0,0,0,0.4);
+      border: 1px solid rgba(255,255,255,0.06);
+      border-radius: 12px;
+      padding: 3px;
+      margin-bottom: 16px;
+    }
+    .seg-btn {
+      flex: 1;
+      padding: 7px 0;
+      font-size: 12px;
+      font-weight: 600;
+      color: var(--text-muted);
+      background: transparent;
+      border: none;
+      border-radius: 9px;
+      cursor: pointer;
+      transition: all 0.15s ease;
+    }
+    .seg-btn.active {
+      background: rgba(255,255,255,0.12);
+      color: white;
+      box-shadow: 0 2px 6px rgba(0,0,0,0.5);
+    }
+
+    /* APPLE TV TOUCHPAD / CLICKPAD */
+    .touchpad-outer {
+      width: 100%;
+      max-width: 330px;
+      margin: 0 auto 16px auto;
+      aspect-ratio: 1 / 1.05;
+      background: radial-gradient(circle at 50% 50%, #1E212A 0%, #12141A 100%);
+      border: 1px solid var(--card-bevel);
+      border-radius: 44px;
+      box-shadow: 0 16px 36px rgba(0,0,0,0.65), inset 0 1px 0 rgba(255,255,255,0.12);
+      position: relative;
+      touch-action: none;
+      overflow: hidden;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+    .touchpad-outer.touch-active {
+      border-color: rgba(255,255,255,0.3);
+      box-shadow: 0 18px 40px rgba(0,0,0,0.8), inset 0 0 20px rgba(255,255,255,0.05);
+    }
+    /* Textura de micro-puntos estilo Bang & Olufsen / Apple */
+    .touchpad-mesh {
+      position: absolute;
+      inset: 0;
+      background-image: radial-gradient(rgba(255, 255, 255, 0.08) 1px, transparent 0);
+      background-size: 14px 14px;
+      pointer-events: none;
+    }
+
+    /* Zonas de toque en el Clickpad */
+    .pad-zone {
+      position: absolute;
+      background: transparent;
+      border: none;
+      color: rgba(255,255,255,0.35);
+      font-size: 14px;
+      font-weight: 700;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      cursor: pointer;
+      transition: color 0.1s, background 0.1s;
+    }
+    .pad-zone:active { color: white; background: rgba(255,255,255,0.08); }
+    .pad-zone-up { top: 0; left: 0; right: 0; height: 32%; }
+    .pad-zone-down { bottom: 0; left: 0; right: 0; height: 32%; }
+    .pad-zone-left { top: 32%; bottom: 32%; left: 0; width: 32%; }
+    .pad-zone-right { top: 32%; bottom: 32%; right: 0; width: 32%; }
+
+    /* Anillo Central OK */
+    .pad-center-ring {
+      width: 104px;
+      height: 104px;
+      border-radius: 50%;
+      background: radial-gradient(circle at 50% 30%, #282C38 0%, #1A1C24 100%);
+      border: 1px solid rgba(255,255,255,0.18);
+      box-shadow: 0 6px 18px rgba(0,0,0,0.5), inset 0 1px 0 rgba(255,255,255,0.2);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 15px;
+      font-weight: 800;
+      letter-spacing: 0.5px;
+      color: white;
+      z-index: 5;
+      cursor: pointer;
+      transition: transform 0.1s, background 0.1s;
+    }
+    .pad-center-ring:active {
+      transform: scale(0.95);
+      background: radial-gradient(circle at 50% 30%, #323746 0%, #1F222C 100%);
+      box-shadow: 0 2px 8px rgba(0,0,0,0.6);
+    }
+
+    /* MODO CRUCETA PRO (Alternativa clásica) */
+    .dpad-cross-container {
+      display: none;
+      width: 240px;
+      height: 240px;
+      margin: 0 auto 16px auto;
+      position: relative;
+    }
+    .dpad-cross-btn {
+      position: absolute;
+      background: #1C1F28;
+      border: 1px solid var(--card-bevel);
+      color: white;
+      border-radius: 16px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 20px;
+      cursor: pointer;
+      box-shadow: 0 8px 18px rgba(0,0,0,0.5);
+    }
+    .dpad-cross-btn:active { background: #2A2E3B; transform: scale(0.96); }
+    .cross-up { top: 0; left: 82px; width: 76px; height: 68px; }
+    .cross-down { bottom: 0; left: 82px; width: 76px; height: 68px; }
+    .cross-left { top: 82px; left: 0; width: 68px; height: 76px; }
+    .cross-right { top: 82px; right: 0; width: 68px; height: 76px; }
+    .cross-ok {
+      top: 82px; left: 82px; width: 76px; height: 76px;
+      border-radius: 50%;
+      background: var(--accent);
+      border: none;
+      box-shadow: 0 0 20px var(--accent-glow);
+      font-size: 15px;
+      font-weight: 800;
+    }
+
+    /* HARDWARE CONTROLS GRID (2 Columnas ergonómicas estilo Apple TV Remote) */
+    .hardware-controls-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 14px;
+      max-width: 330px;
+      margin: 0 auto 16px auto;
+    }
+    .hardware-col { display: flex; flex-direction: column; gap: 12px; }
+
+    /* Botones esculpidos en titanio */
+    .titanium-btn {
+      height: 58px;
+      border-radius: 20px;
+      background: linear-gradient(180deg, #1C1F28 0%, #15171E 100%);
+      border: 1px solid var(--card-bevel);
+      box-shadow: 0 6px 14px rgba(0,0,0,0.4), inset 0 1px 0 rgba(255,255,255,0.12);
+      color: white;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+      font-size: 14px;
+      font-weight: 700;
+      cursor: pointer;
+      transition: all 0.1s ease;
+    }
+    .titanium-btn svg { width: 20px; height: 20px; stroke: currentColor; fill: none; stroke-width: 2.2; }
+    .titanium-btn:active {
+      transform: scale(0.96);
+      background: #13151B;
+      box-shadow: 0 2px 6px rgba(0,0,0,0.5);
+    }
+
+    /* ROCKER VERTICAL DE VOLUMEN (Estilo Apple TV Remote físico) */
+    .volume-rocker {
+      height: 128px;
+      border-radius: 28px;
+      background: linear-gradient(180deg, #1C1F28 0%, #15171E 100%);
+      border: 1px solid var(--card-bevel);
+      box-shadow: 0 8px 18px rgba(0,0,0,0.45), inset 0 1px 0 rgba(255,255,255,0.12);
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+    }
+    .rocker-btn {
+      flex: 1;
+      background: transparent;
+      border: none;
+      color: white;
+      font-size: 20px;
+      font-weight: 700;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      cursor: pointer;
+      transition: background 0.1s;
+    }
+    .rocker-btn:active { background: rgba(255,255,255,0.1); }
+    .rocker-divider {
+      height: 1px;
+      background: rgba(255,255,255,0.08);
+      margin: 0 16px;
+    }
+
+    /* SLIDER FINO DE VOLUMEN CON PORCENTAJE */
+    .volume-fine-strip {
+      max-width: 330px;
+      margin: 0 auto 18px auto;
+      background: rgba(22, 24, 31, 0.6);
+      border: 1px solid var(--card-border);
+      border-radius: 16px;
+      padding: 10px 14px;
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+    .vol-label-text { font-size: 11px; font-weight: 700; color: var(--text-muted); min-width: 30px; }
+    .vol-fine-slider {
+      flex: 1;
+      height: 6px;
+      -webkit-appearance: none;
+      background: rgba(255,255,255,0.12);
+      border-radius: 3px;
+      outline: none;
+    }
+    .vol-fine-slider::-webkit-slider-thumb {
+      -webkit-appearance: none;
+      width: 18px;
+      height: 18px;
+      border-radius: 50%;
+      background: white;
+      box-shadow: 0 2px 6px rgba(0,0,0,0.6);
+      cursor: pointer;
+    }
+
+    /* ONE-TAP DOCK (4 Accesos rápidos fijos estilo Apple TV) */
+    .one-tap-dock {
+      max-width: 330px;
+      margin: 0 auto;
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 8px;
+    }
+    .dock-btn {
+      height: 48px;
+      border-radius: 14px;
+      background: rgba(255,255,255,0.06);
+      border: 1px solid rgba(255,255,255,0.09);
+      color: white;
+      font-size: 12px;
+      font-weight: 800;
+      letter-spacing: -0.2px;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      transition: all 0.1s ease;
+    }
+    .dock-btn:active { transform: scale(0.94); border-color: white; }
+    .dock-netflix { color: #E50914; }
+    .dock-youtube { color: #FF0000; }
+    .dock-prime { color: #00A8E1; font-size: 11px; }
+    .dock-disney { color: #60A5FA; }
+
+    /* TAB 2: APPS & RECIENTES STYLING */
+    .section-header {
+      font-size: 12px;
+      font-weight: 700;
+      letter-spacing: 0.8px;
+      text-transform: uppercase;
+      color: var(--text-muted);
+      margin: 18px 0 10px 0;
+    }
+    .search-pill-bar {
+      display: flex;
+      gap: 8px;
+      margin-bottom: 16px;
+    }
+    .search-field {
+      flex: 1;
+      background: rgba(255,255,255,0.07);
+      border: 1px solid rgba(255,255,255,0.12);
+      border-radius: 14px;
+      padding: 11px 14px;
+      color: white;
+      font-size: 14px;
+      outline: none;
+    }
+    .search-btn {
+      background: var(--accent);
+      border: none;
+      color: white;
+      font-weight: 700;
+      border-radius: 14px;
+      padding: 0 16px;
+      cursor: pointer;
+    }
+    .apps-stream-grid {
+      display: grid;
+      grid-template-columns: repeat(2, 1fr);
+      gap: 10px;
+      margin-bottom: 16px;
+    }
+    .stream-card {
+      background: linear-gradient(145deg, #1A1D24 0%, #12141A 100%);
+      border: 1px solid var(--card-border);
+      border-radius: 20px;
+      height: 68px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-weight: 800;
+      font-size: 16px;
+      cursor: pointer;
+      box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+      transition: transform 0.1s, border-color 0.1s;
+    }
+    .stream-card:active { transform: scale(0.96); border-color: white; }
+
+    /* BOTTOM TAB BAR (Nativa iOS con blur translúcido) */
+    nav.ios-tab-bar {
       position: fixed;
       bottom: 0;
       left: 0;
       right: 0;
-      height: 64px;
-      background: rgba(15, 23, 42, 0.92);
-      backdrop-filter: blur(24px);
-      -webkit-backdrop-filter: blur(24px);
+      height: 68px;
+      background: rgba(14, 16, 21, 0.88);
+      backdrop-filter: blur(28px);
+      -webkit-backdrop-filter: blur(28px);
       display: flex;
       justify-content: space-around;
       align-items: center;
-      border-top: 1px solid rgba(255,255,255,0.08);
+      border-top: 1px solid var(--card-border);
       z-index: 100;
       padding-bottom: env(safe-area-inset-bottom);
     }
-    .nav-btn {
+    .tab-item {
       background: transparent;
       border: none;
-      color: #94A3B8;
+      color: var(--text-muted);
       display: flex;
       flex-direction: column;
       align-items: center;
-      gap: 3px;
+      gap: 4px;
       font-size: 11px;
       font-weight: 600;
       cursor: pointer;
       flex: 1;
       padding: 8px 0;
+      transition: color 0.15s ease;
     }
-    .nav-btn svg { width: 22px; height: 22px; stroke: currentColor; fill: none; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
-    .nav-btn.active { color: #60A5FA; }
+    .tab-item svg { width: 22px; height: 22px; stroke: currentColor; fill: none; stroke-width: 2.2; }
+    .tab-item.active { color: #60A5FA; }
 
-    /* Cards & Containers */
-    .section-title { font-size: 13px; font-weight: 700; text-transform: uppercase; letter-spacing: 1px; color: #94A3B8; margin: 18px 0 10px 0; }
-    .glass-card {
-      background: rgba(30, 41, 59, 0.6);
-      border: 1px solid rgba(255,255,255,0.08);
-      border-radius: 16px;
+    /* Tarjetas generales de cristal */
+    .glass-tile {
+      background: var(--card-bg);
+      border: 1px solid var(--card-border);
+      border-radius: 18px;
       padding: 14px;
-      margin-bottom: 14px;
-    }
-
-    /* Profiles Bar */
-    .profile-row { display: flex; gap: 8px; overflow-x: auto; padding-bottom: 4px; }
-    .profile-chip {
-      background: rgba(255,255,255,0.06);
-      border: 1px solid rgba(255,255,255,0.12);
-      border-radius: 20px;
-      padding: 6px 14px;
-      display: flex;
-      align-items: center;
-      gap: 6px;
-      font-size: 13px;
-      font-weight: 600;
-      cursor: pointer;
-      white-space: nowrap;
-    }
-    .profile-chip.active { background: #2563EB; border-color: #60A5FA; color: white; }
-
-    /* Streaming Quick Grid */
-    .apps-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px; }
-    .app-card {
-      background: rgba(30, 36, 43, 0.85);
-      border: 1px solid rgba(255,255,255,0.12);
-      border-radius: 24px;
-      height: 64px;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      font-weight: 800;
-      font-size: 16px;
-      cursor: pointer;
-      transition: transform 0.1s, border-color 0.1s;
-    }
-    .app-card:active { transform: scale(0.96); border-color: white; }
-
-    /* D-PAD Touch Controls */
-    .dpad-container {
-      display: flex;
-      flex-direction: column;
-      align-items: center;
-      justify-content: center;
-      margin: 16px 0;
-    }
-    .dpad {
-      width: 240px;
-      height: 240px;
-      border-radius: 50%;
-      background: rgba(30, 41, 59, 0.7);
-      border: 2px solid rgba(255,255,255,0.15);
-      position: relative;
-      box-shadow: 0 10px 30px rgba(0,0,0,0.5);
-    }
-    .dpad-btn {
-      position: absolute;
-      background: transparent;
-      border: none;
-      color: white;
-      cursor: pointer;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-    }
-    .dpad-btn:active { background: rgba(255,255,255,0.15); border-radius: 50%; }
-    .dpad-up { top: 8px; left: 85px; width: 70px; height: 60px; }
-    .dpad-down { bottom: 8px; left: 85px; width: 70px; height: 60px; }
-    .dpad-left { top: 85px; left: 8px; width: 60px; height: 70px; }
-    .dpad-right { top: 85px; right: 8px; width: 60px; height: 70px; }
-    .dpad-center {
-      top: 75px; left: 75px; width: 90px; height: 90px;
-      border-radius: 50%;
-      background: #2563EB;
-      box-shadow: 0 0 15px rgba(37,99,235,0.5);
-      font-weight: 800;
-      font-size: 16px;
-    }
-    .dpad-center:active { background: #1D4ED8; }
-
-    /* Action Buttons Row */
-    .action-row { display: flex; justify-content: space-around; width: 100%; margin: 12px 0; gap: 8px; }
-    .circle-btn {
-      width: 54px;
-      height: 54px;
-      border-radius: 50%;
-      background: rgba(255,255,255,0.08);
-      border: 1px solid rgba(255,255,255,0.12);
-      color: white;
-      display: flex;
-      flex-direction: column;
-      align-items: center;
-      justify-content: center;
-      font-size: 10px;
-      cursor: pointer;
-      gap: 2px;
-    }
-    .circle-btn:active { background: #2563EB; border-color: white; }
-
-    /* Volume Slider */
-    .vol-box { display: flex; align-items: center; gap: 12px; margin: 14px 0; }
-    .vol-slider {
-      flex: 1;
-      height: 10px;
-      -webkit-appearance: none;
-      background: rgba(255,255,255,0.15);
-      border-radius: 5px;
-      outline: none;
-    }
-    .vol-slider::-webkit-slider-thumb {
-      -webkit-appearance: none;
-      width: 24px;
-      height: 24px;
-      border-radius: 50%;
-      background: #2563EB;
-      border: 2px solid white;
-      cursor: pointer;
-    }
-
-    /* Search & Inputs */
-    .search-bar { display: flex; gap: 8px; margin-bottom: 14px; }
-    .input-box {
-      flex: 1;
-      background: rgba(255,255,255,0.08);
-      border: 1px solid rgba(255,255,255,0.14);
-      border-radius: 12px;
-      padding: 10px 14px;
-      color: white;
-      font-size: 14px;
-      outline: none;
-    }
-    .primary-btn {
-      background: #2563EB;
-      border: none;
-      color: white;
-      font-weight: 700;
-      border-radius: 12px;
-      padding: 0 16px;
-      cursor: pointer;
-    }
-
-    /* Auto-discovery notification banner */
-    .reconnect-banner {
-      background: #D97706;
-      color: white;
-      padding: 8px 14px;
-      font-size: 12px;
-      display: none;
-      align-items: center;
-      justify-content: space-between;
-      border-radius: 8px;
-      margin-bottom: 12px;
+      margin-bottom: 10px;
     }
   </style>
 </head>
 <body>
 
+  <!-- HEADER CON ESTADO EN TIEMPO REAL -->
   <header>
-    <div class="brand">
-      <div class="brand-dot"></div>
-      <span>TCL Smart Remote</span>
+    <div class="brand-wrap">
+      <div class="led-indicator" id="ledStatus"></div>
+      <div>
+        <div class="brand-title">TCL Smart TV</div>
+        <div class="brand-sub" id="tvSubtext">Apple TV Remote Mode</div>
+      </div>
     </div>
-    <div class="status-badge" id="tvStatusBadge">Conectado</div>
+    <div class="status-pill" id="tvStatusBadge">
+      <span>●</span>
+      <span id="tvStatusText">Conectado</span>
+    </div>
   </header>
 
-  <div style="padding: 12px 16px 0 16px;">
-    <div id="reconnectBanner" class="reconnect-banner">
-      <span>Buscando TV en la red Wi-Fi...</span>
-      <button onclick="scanForTvIp()" style="background:white; color:#B45309; border:none; padding:3px 8px; border-radius:4px; font-weight:bold; cursor:pointer;">Buscar</button>
-    </div>
+  <!-- STRIP DE PERFILES RÁPIDOS EN CRISTAL -->
+  <div class="profiles-strip" id="profilesRow">
+    <!-- Rellenado dinámicamente -->
   </div>
 
-  <!-- TAB 1: APPS Y CONTENIDO -->
-  <div id="tabApps" class="tab-content active">
-    <div class="section-title">Perfil Activo en la TV</div>
-    <div class="profile-row" id="profilesRow">
-      <!-- Inyectado por JS -->
+  <!-- TAB 1: CONTROL REMOTO (VISTA PRINCIPAL ESTILO APPLE TV / BEOREMOTE) -->
+  <div id="tabRemote" class="tab-content active">
+    
+    <!-- SELECTOR DE MODO DUAL -->
+    <div class="segmented-control">
+      <button class="seg-btn active" id="btnModeTouch" onclick="setRemoteMode('touch')">Touchpad Apple TV</button>
+      <button class="seg-btn" id="btnModeCross" onclick="setRemoteMode('cross')">Cruceta Pro</button>
     </div>
 
-    <div class="section-title">Buscar o Enviar a la TV</div>
-    <div class="search-bar">
-      <input type="text" id="queryInput" class="input-box" placeholder="Título, video YouTube o URL...">
-      <button class="primary-btn" onclick="sendDeepLink()">Abrir</button>
-    </div>
-
-    <div class="section-title">Accesos Rápidos a Streaming</div>
-    <div class="apps-grid">
-      <div class="app-card" style="color:white;" onclick="launchApp('com.netflix.ninja', 'Netflix', 1)">NETFLIX</div>
-      <div class="app-card" style="color:white;" onclick="launchApp('com.google.android.youtube.tv', 'YouTube', 1)">YouTube</div>
-      <div class="app-card" style="color:white;" onclick="launchApp('com.amazon.amazonvideo.livingroom', 'Prime Video', 1)">prime video</div>
-      <div class="app-card" style="color:white;" onclick="launchApp('com.disney.disneyplus', 'Disney+', 1)">Disney+</div>
-      <div class="app-card" style="color:white;" onclick="launchApp('com.wbd.stream', 'Max', 1)">max</div>
-      <div class="app-card" style="color:white;" onclick="launchApp('com.univision.prendetv', 'ViX', 1)">ViX</div>
-    </div>
-
-    <div class="section-title">Continuar Viendo (Recientes)</div>
-    <div id="recentContainer"></div>
-
-    <div class="section-title">Todas las Apps de la TV</div>
-    <input type="text" id="filterAppInput" class="input-box" style="margin-bottom:10px; width:100%;" placeholder="Filtrar apps instaladas..." oninput="filterInstalledApps()">
-    <div id="installedAppsContainer" style="display:grid; grid-template-columns: repeat(2, 1fr); gap:8px;"></div>
-  </div>
-
-  <!-- TAB 2: CONTROL TOUCH Y VOLUMEN -->
-  <div id="tabRemote" class="tab-content">
-    <div class="section-title">Volumen de la TV</div>
-    <div class="vol-box">
-      <button class="circle-btn" onclick="sendVol('down')">Vol -</button>
-      <input type="range" id="volSlider" class="vol-slider" min="0" max="100" value="15" onchange="setVolumeValue(this.value)">
-      <button class="circle-btn" onclick="sendVol('up')">Vol +</button>
-      <button class="circle-btn" onclick="sendVol('mute')">Mute</button>
-    </div>
-
-    <div class="section-title">Cruceta D-Pad & Control Remoto</div>
-    <div class="dpad-container">
-      <div class="dpad">
-        <button class="dpad-btn dpad-up" onclick="sendKey('UP')">▲</button>
-        <button class="dpad-btn dpad-down" onclick="sendKey('DOWN')">▼</button>
-        <button class="dpad-btn dpad-left" onclick="sendKey('LEFT')">◀</button>
-        <button class="dpad-btn dpad-right" onclick="sendKey('RIGHT')">▶</button>
-        <button class="dpad-btn dpad-center" onclick="sendKey('ENTER')">OK</button>
+    <!-- MODO A: GRAN TOUCHPAD / CLICKPAD TÁCTIL (Deslizar o Tocar) -->
+    <div class="touchpad-outer" id="appleTouchpad">
+      <div class="touchpad-mesh"></div>
+      
+      <!-- Indicadores y Zonas direccionales táctiles -->
+      <button class="pad-zone pad-zone-up" onclick="sendKey('UP')">▲</button>
+      <button class="pad-zone pad-zone-down" onclick="sendKey('DOWN')">▼</button>
+      <button class="pad-zone pad-zone-left" onclick="sendKey('LEFT')">◀</button>
+      <button class="pad-zone pad-zone-right" onclick="sendKey('RIGHT')">▶</button>
+      
+      <!-- Anillo central de Clickpad OK -->
+      <div class="pad-center-ring" onclick="sendKey('ENTER')">
+        <span>OK</span>
       </div>
     </div>
 
-    <div class="action-row">
-      <button class="circle-btn" onclick="sendKey('BACK')">
-        <span style="font-size:18px;">↩</span>Atrás
-      </button>
-      <button class="circle-btn" onclick="sendKey('HOME')">
-        <span style="font-size:18px;">🏠</span>Home
-      </button>
-      <button class="circle-btn" onclick="sendKey('PLAY_PAUSE')">
-        <span style="font-size:18px;">⏯</span>Play
-      </button>
-      <button class="circle-btn" onclick="sendKey('SETTINGS')">
-        <span style="font-size:18px;">⚙</span>Ajustes
-      </button>
+    <!-- MODO B: CRUCETA CLÁSICA ALTERNATIVA -->
+    <div class="dpad-cross-container" id="crossContainer">
+      <button class="dpad-cross-btn cross-up" onclick="sendKey('UP')">▲</button>
+      <button class="dpad-cross-btn cross-down" onclick="sendKey('DOWN')">▼</button>
+      <button class="dpad-cross-btn cross-left" onclick="sendKey('LEFT')">◀</button>
+      <button class="dpad-cross-btn cross-right" onclick="sendKey('RIGHT')">▶</button>
+      <button class="dpad-cross-btn cross-ok" onclick="sendKey('ENTER')">OK</button>
+    </div>
+
+    <!-- BOTONES ERGONÓMICOS EN 2 COLUMNAS DE TITANIO -->
+    <div class="hardware-controls-grid">
+      <!-- Columna Izquierda: Atrás, Play/Pausa, Mute -->
+      <div class="hardware-col">
+        <button class="titanium-btn" onclick="sendKey('BACK')">
+          <svg viewBox="0 0 24 24"><polyline points="15 18 9 12 15 6"></polyline></svg>
+          <span>Atrás</span>
+        </button>
+        <button class="titanium-btn" onclick="sendKey('PLAY_PAUSE')">
+          <svg viewBox="0 0 24 24"><polygon points="5 3 19 12 5 21 5 3"></polygon></svg>
+          <span>Play/Pausa</span>
+        </button>
+        <button class="titanium-btn" onclick="sendVol('mute')">
+          <svg viewBox="0 0 24 24"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"></polygon><line x1="23" y1="9" x2="17" y2="15"></line><line x1="17" y1="9" x2="23" y2="15"></line></svg>
+          <span>Mute</span>
+        </button>
+      </div>
+
+      <!-- Columna Derecha: Home TV y Rocker Vertical de Volumen -->
+      <div class="hardware-col">
+        <button class="titanium-btn" onclick="sendKey('HOME')">
+          <svg viewBox="0 0 24 24"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"></path><polyline points="9 22 9 12 15 12 15 22"></polyline></svg>
+          <span>Home TV</span>
+        </button>
+        <div class="volume-rocker">
+          <button class="rocker-btn" onclick="sendVol('up')">＋</button>
+          <div class="rocker-divider"></div>
+          <button class="rocker-btn" onclick="sendVol('down')">－</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- SLIDER FINO CON PORCENTAJE REAL DE VOLUMEN -->
+    <div class="volume-fine-strip">
+      <span class="vol-label-text">VOL</span>
+      <input type="range" id="volSlider" class="vol-fine-slider" min="0" max="100" value="20" onchange="setVolumeValue(this.value)">
+      <span class="vol-label-text" id="volPercentageText" style="text-align:right;">20%</span>
+    </div>
+
+    <!-- ONE-TAP DOCK (4 Apps directas sin cambiar de pestaña) -->
+    <div class="one-tap-dock">
+      <button class="dock-btn dock-netflix" onclick="launchApp('com.netflix.ninja', 'Netflix', 1)">NETFLIX</button>
+      <button class="dock-btn dock-youtube" onclick="launchApp('com.google.android.youtube.tv', 'YouTube', 1)">YouTube</button>
+      <button class="dock-btn dock-prime" onclick="launchApp('com.amazon.amazonvideo.livingroom', 'Prime Video', 1)">Prime</button>
+      <button class="dock-btn dock-disney" onclick="launchApp('com.disney.disneyplus', 'Disney+', 1)">Disney+</button>
     </div>
   </div>
 
-  <!-- TAB 3: FONDO TV (WALLPAPER) -->
-  <div id="tabWallpaper" class="tab-content">
-    <div class="section-title">Subir Foto de mi Celular a la Pantalla</div>
-    <div class="glass-card" style="text-align:center;">
-      <p style="font-size:13px; color:#94A3B8; margin-bottom:12px;">Pon cualquier fotografía de tu galería en pantalla completa en la TV:</p>
-      <input type="file" id="phonePhotoPicker" accept="image/*" style="display:none;" onchange="uploadPhonePhoto(this)">
-      <button class="primary-btn" style="padding:12px 24px; font-size:14px;" onclick="document.getElementById('phonePhotoPicker').click()">
-        📷 Elegir Foto de mi Celular
-      </button>
-      <p id="uploadStatusText" style="font-size:11px; color:#10B981; margin-top:8px;"></p>
+  <!-- TAB 2: APPS & RECIENTES (LANZADOR VISUAL Y BÚSQUEDA) -->
+  <div id="tabApps" class="tab-content">
+    <div class="section-header">Búsqueda Rápida en la TV</div>
+    <div class="search-pill-bar">
+      <input type="text" id="queryInput" class="search-field" placeholder="Buscar película, serie o video YouTube...">
+      <button class="search-btn" onclick="sendDeepLink()">Abrir</button>
     </div>
 
-    <div class="section-title">Wallpapers Cinematográficos Integrados</div>
+    <div class="section-header">Plataformas de Streaming</div>
+    <div class="apps-stream-grid">
+      <div class="stream-card" style="color:#E50914;" onclick="launchApp('com.netflix.ninja', 'Netflix', 1)">NETFLIX</div>
+      <div class="stream-card" style="color:#FF0000;" onclick="launchApp('com.google.android.youtube.tv', 'YouTube', 1)">YouTube</div>
+      <div class="stream-card" style="color:#00A8E1;" onclick="launchApp('com.amazon.amazonvideo.livingroom', 'Prime Video', 1)">prime video</div>
+      <div class="stream-card" style="color:#60A5FA;" onclick="launchApp('com.disney.disneyplus', 'Disney+', 1)">Disney+</div>
+      <div class="stream-card" style="color:#A855F7;" onclick="launchApp('com.wbd.stream', 'Max', 1)">max</div>
+      <div class="stream-card" style="color:#F97316;" onclick="launchApp('com.univision.prendetv', 'ViX', 1)">ViX</div>
+    </div>
+
+    <div class="section-header">Continuar Viendo (Recientes)</div>
+    <div id="recentContainer"></div>
+
+    <div class="section-header">Todas las Apps Instaladas</div>
+    <input type="text" id="filterAppInput" class="search-field" style="margin-bottom:10px; width:100%;" placeholder="Filtrar aplicaciones..." oninput="filterInstalledApps()">
+    <div id="installedAppsContainer" style="display:grid; grid-template-columns: repeat(2, 1fr); gap:8px;"></div>
+  </div>
+
+  <!-- TAB 3: FONDO DE PANTALLA (WALLPAPER STUDIO) -->
+  <div id="tabWallpaper" class="tab-content">
+    <div class="section-header">Foto Personalizada desde tu Celular</div>
+    <div class="glass-tile" style="text-align:center;">
+      <p style="font-size:13px; color:var(--text-muted); margin-bottom:14px;">Elige cualquier foto de tu galería para proyectarla en pantalla completa en tu TV TCL:</p>
+      <input type="file" id="phonePhotoPicker" accept="image/*" style="display:none;" onchange="uploadPhonePhoto(this)">
+      <button class="search-btn" style="padding:13px 26px; font-size:14px; border-radius:16px;" onclick="document.getElementById('phonePhotoPicker').click()">
+        📷 Subir Foto de mi Galería
+      </button>
+      <p id="uploadStatusText" style="font-size:11px; color:#10B981; margin-top:10px;"></p>
+    </div>
+
+    <div class="section-header">Colección Panorámica Integrada</div>
     <div id="presetWallpapersContainer" style="display:flex; flex-direction:column; gap:8px;"></div>
   </div>
 
-  <!-- BOTTOM BAR -->
-  <nav class="bottom-bar">
-    <button class="nav-btn active" onclick="switchTab('tabApps', this)">
-      <svg viewBox="0 0 24 24"><rect x="2" y="7" width="20" height="15" rx="2" ry="2"></rect><polyline points="17 2 12 7 7 2"></polyline></svg>
-      <span>Apps</span>
-    </button>
-    <button class="nav-btn" onclick="switchTab('tabRemote', this)">
+  <!-- NAVEGACIÓN INFERIOR ESTILO APP NATIVA iOS -->
+  <nav class="ios-tab-bar">
+    <button class="tab-item active" id="navRemote" onclick="switchTab('tabRemote', this)">
       <svg viewBox="0 0 24 24"><polygon points="5 3 19 12 5 21 5 3"></polygon></svg>
       <span>Control</span>
     </button>
-    <button class="nav-btn" onclick="switchTab('tabWallpaper', this)">
+    <button class="tab-item" id="navApps" onclick="switchTab('tabApps', this)">
+      <svg viewBox="0 0 24 24"><rect x="2" y="7" width="20" height="15" rx="2" ry="2"></rect><polyline points="17 2 12 7 7 2"></polyline></svg>
+      <span>Apps & TV</span>
+    </button>
+    <button class="tab-item" id="navWallpaper" onclick="switchTab('tabWallpaper', this)">
       <svg viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect><circle cx="8.5" cy="8.5" r="1.5"></circle><polyline points="21 15 16 10 5 21"></polyline></svg>
       <span>Fondo TV</span>
     </button>
@@ -749,33 +1058,110 @@ class TvRemoteWebServer(
   <script>
     let appState = null;
     let allInstalledApps = [];
+    let remoteMode = 'touch';
 
-    function vibrate() {
-      if (navigator.vibrate) navigator.vibrate(15);
+    function vibrate(ms) {
+      try {
+        if (navigator.vibrate) navigator.vibrate(ms || 18);
+      } catch (_) {}
     }
 
     function switchTab(tabId, btn) {
-      vibrate();
+      vibrate(14);
       document.querySelectorAll('.tab-content').forEach(el => el.classList.remove('active'));
-      document.querySelectorAll('.nav-btn').forEach(el => el.classList.remove('active'));
+      document.querySelectorAll('.tab-item').forEach(el => el.classList.remove('active'));
       document.getElementById(tabId).classList.add('active');
       btn.classList.add('active');
     }
 
+    function setRemoteMode(mode) {
+      vibrate(14);
+      remoteMode = mode;
+      const touchPad = document.getElementById('appleTouchpad');
+      const cross = document.getElementById('crossContainer');
+      const btnTouch = document.getElementById('btnModeTouch');
+      const btnCross = document.getElementById('btnModeCross');
+
+      if (mode === 'touch') {
+        touchPad.style.display = 'flex';
+        cross.style.display = 'none';
+        btnTouch.classList.add('active');
+        btnCross.classList.remove('active');
+      } else {
+        touchPad.style.display = 'none';
+        cross.style.display = 'block';
+        btnCross.classList.add('active');
+        btnTouch.classList.remove('active');
+      }
+    }
+
+    // GESTOS TÁCTILES EN EL TOUCHPAD (SWIPE UP / DOWN / LEFT / RIGHT)
+    let tStartX = 0;
+    let tStartY = 0;
+    let tStartTime = 0;
+    let isSwiping = false;
+
+    function initTouchpadGestures() {
+      const pad = document.getElementById('appleTouchpad');
+      if (!pad) return;
+
+      pad.addEventListener('touchstart', (e) => {
+        if (e.touches.length === 1) {
+          tStartX = e.touches[0].clientX;
+          tStartY = e.touches[0].clientY;
+          tStartTime = Date.now();
+          isSwiping = false;
+          pad.classList.add('touch-active');
+        }
+      }, { passive: true });
+
+      pad.addEventListener('touchmove', (e) => {
+        if (e.touches.length === 1) {
+          const dx = e.touches[0].clientX - tStartX;
+          const dy = e.touches[0].clientY - tStartY;
+          if (Math.abs(dx) > 16 || Math.abs(dy) > 16) {
+            isSwiping = true;
+          }
+        }
+      }, { passive: true });
+
+      pad.addEventListener('touchend', (e) => {
+        pad.classList.remove('touch-active');
+        const elapsed = Date.now() - tStartTime;
+        const touch = e.changedTouches[0];
+        const dx = touch.clientX - tStartX;
+        const dy = touch.clientY - tStartY;
+        const dist = Math.hypot(dx, dy);
+
+        if (dist > 38 && elapsed < 650) {
+          if (Math.abs(dx) > Math.abs(dy)) {
+            if (dx > 0) sendKey('RIGHT');
+            else sendKey('LEFT');
+          } else {
+            if (dy > 0) sendKey('DOWN');
+            else sendKey('UP');
+          }
+        }
+      }, { passive: true });
+    }
+
     async function loadStatus() {
       try {
-        const res = await fetch('/api/status', { signal: AbortSignal.timeout(3000) });
+        const res = await fetch('/api/status', { signal: AbortSignal.timeout(2800) });
         if (!res.ok) throw new Error('Status error');
         appState = await res.json();
         renderState();
-        document.getElementById('reconnectBanner').style.display = 'none';
-        document.getElementById('tvStatusBadge').innerText = 'Conectado';
-        document.getElementById('tvStatusBadge').style.background = 'rgba(37,99,235,0.2)';
-        localStorage.setItem('last_known_tv_ip', window.location.hostname);
+        document.getElementById('ledStatus').style.background = '#10B981';
+        document.getElementById('ledStatus').style.boxShadow = '0 0 10px #10B981';
+        document.getElementById('tvStatusText').innerText = 'Conectado';
+        document.getElementById('tvStatusBadge').style.background = 'rgba(16, 185, 129, 0.12)';
+        document.getElementById('tvStatusBadge').style.color = '#34D399';
       } catch (e) {
-        document.getElementById('tvStatusBadge').innerText = 'Desconectado';
-        document.getElementById('tvStatusBadge').style.background = 'rgba(239,68,68,0.2)';
-        document.getElementById('reconnectBanner').style.display = 'flex';
+        document.getElementById('ledStatus').style.background = '#EF4444';
+        document.getElementById('ledStatus').style.boxShadow = '0 0 10px #EF4444';
+        document.getElementById('tvStatusText').innerText = 'Reconectando...';
+        document.getElementById('tvStatusBadge').style.background = 'rgba(239, 68, 68, 0.12)';
+        document.getElementById('tvStatusBadge').style.color = '#F87171';
       }
     }
 
@@ -785,51 +1171,59 @@ class TvRemoteWebServer(
       // Perfiles
       const profilesRow = document.getElementById('profilesRow');
       profilesRow.innerHTML = '';
-      appState.profiles.forEach(p => {
-        const isActive = p.id === appState.activeProfile.id;
-        const chip = document.createElement('div');
-        chip.className = 'profile-chip' + (isActive ? ' active' : '');
-        chip.innerText = p.emoji + ' ' + p.name;
-        chip.onclick = () => setProfile(p.id);
-        profilesRow.appendChild(chip);
+      (appState.profiles || []).forEach(p => {
+        const isActive = p.id === appState.activeProfile?.id;
+        const pill = document.createElement('div');
+        pill.className = 'profile-pill' + (isActive ? ' active' : '');
+        pill.innerText = (p.emoji || '👤') + ' ' + p.name;
+        pill.onclick = () => setProfile(p.id);
+        profilesRow.appendChild(pill);
       });
 
       // Volumen
       const volSlider = document.getElementById('volSlider');
-      volSlider.max = appState.volume.max;
-      volSlider.value = appState.volume.current;
+      if (volSlider && appState.volume) {
+        volSlider.max = appState.volume.max || 100;
+        volSlider.value = appState.volume.current || 0;
+        const pct = Math.round((appState.volume.current / (appState.volume.max || 100)) * 100);
+        document.getElementById('volPercentageText').innerText = pct + '%';
+      }
 
       // Recientes
       const recentContainer = document.getElementById('recentContainer');
-      recentContainer.innerHTML = '';
-      (appState.lastWatched || []).forEach(item => {
-        const card = document.createElement('div');
-        card.className = 'glass-card';
-        card.style.display = 'flex';
-        card.style.justifyContent = 'space-between';
-        card.style.alignItems = 'center';
-        card.style.cursor = 'pointer';
-        card.onclick = () => launchApp(item.packageName, item.title, item.profileIndex);
-        card.innerHTML = '<div><div style="font-weight:700; font-size:14px;">' + item.title + '</div><div style="font-size:11px; color:#94A3B8;">' + item.subtitle + '</div></div><span style="font-size:18px;">▶</span>';
-        recentContainer.appendChild(card);
-      });
+      if (recentContainer) {
+        recentContainer.innerHTML = '';
+        (appState.lastWatched || []).forEach(item => {
+          const card = document.createElement('div');
+          card.className = 'glass-tile';
+          card.style.display = 'flex';
+          card.style.justifyContent = 'space-between';
+          card.style.alignItems = 'center';
+          card.style.cursor = 'pointer';
+          card.onclick = () => launchApp(item.packageName, item.title, item.profileIndex);
+          card.innerHTML = '<div><div style="font-weight:700; font-size:14px;">' + item.title + '</div><div style="font-size:11px; color:#8E95A5;">' + (item.subtitle || '') + '</div></div><span style="font-size:18px; color:#60A5FA;">▶</span>';
+          recentContainer.appendChild(card);
+        });
+      }
 
       // Wallpapers
       const wpContainer = document.getElementById('presetWallpapersContainer');
-      wpContainer.innerHTML = '';
-      (appState.wallpapers || []).forEach(wp => {
-        if (wp.id === 'wp_custom') return;
-        const isActive = wp.id === appState.activeWallpaper.id;
-        const card = document.createElement('div');
-        card.className = 'glass-card';
-        card.style.display = 'flex';
-        card.style.justifyContent = 'space-between';
-        card.style.alignItems = 'center';
-        card.style.cursor = 'pointer';
-        card.onclick = () => setPresetWallpaper(wp.id);
-        card.innerHTML = '<div><div style="font-weight:700; font-size:14px;">' + wp.name + (isActive ? ' (Activo)' : '') + '</div><div style="font-size:11px; color:#94A3B8;">' + wp.description + '</div></div><button class="primary-btn" style="padding:6px 12px; font-size:11px;">Aplicar</button>';
-        wpContainer.appendChild(card);
-      });
+      if (wpContainer) {
+        wpContainer.innerHTML = '';
+        (appState.wallpapers || []).forEach(wp => {
+          if (wp.id === 'wp_custom') return;
+          const isActive = wp.id === appState.activeWallpaper?.id;
+          const card = document.createElement('div');
+          card.className = 'glass-tile';
+          card.style.display = 'flex';
+          card.style.justifyContent = 'space-between';
+          card.style.alignItems = 'center';
+          card.style.cursor = 'pointer';
+          card.onclick = () => setPresetWallpaper(wp.id);
+          card.innerHTML = '<div><div style="font-weight:700; font-size:14px;">' + wp.name + (isActive ? ' <span style="color:#10B981;">(Activo)</span>' : '') + '</div><div style="font-size:11px; color:#8E95A5;">' + (wp.description || '') + '</div></div><button class="search-btn" style="padding:6px 14px; font-size:11px;">Aplicar</button>';
+          wpContainer.appendChild(card);
+        });
+      }
 
       allInstalledApps = appState.installedApps || [];
       renderInstalledApps(allInstalledApps);
@@ -837,16 +1231,17 @@ class TvRemoteWebServer(
 
     function renderInstalledApps(apps) {
       const container = document.getElementById('installedAppsContainer');
+      if (!container) return;
       container.innerHTML = '';
       apps.forEach(app => {
         const item = document.createElement('div');
-        item.className = 'glass-card';
-        item.style.padding = '10px';
+        item.className = 'glass-tile';
+        item.style.padding = '12px';
         item.style.margin = '0';
         item.style.cursor = 'pointer';
         item.style.textAlign = 'center';
         item.style.fontSize = '12px';
-        item.style.fontWeight = 'bold';
+        item.style.fontWeight = '700';
         item.innerText = app.label;
         item.onclick = () => launchApp(app.packageName, app.label, 1);
         container.appendChild(item);
@@ -860,78 +1255,94 @@ class TvRemoteWebServer(
     }
 
     async function sendKey(k) {
-      vibrate();
-      await fetch('/api/key', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ key: k })
-      });
+      vibrate(20);
+      try {
+        await fetch('/api/key', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ key: k })
+        });
+      } catch (_) {}
     }
 
     async function sendVol(action) {
-      vibrate();
-      await fetch('/api/volume', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action: action })
-      });
-      loadStatus();
+      vibrate(18);
+      try {
+        await fetch('/api/volume', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ action: action })
+        });
+        loadStatus();
+      } catch (_) {}
     }
 
     async function setVolumeValue(val) {
-      await fetch('/api/volume', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action: 'set', value: parseInt(val) })
-      });
+      try {
+        await fetch('/api/volume', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ action: 'set', value: parseInt(val) })
+        });
+        const max = appState?.volume?.max || 100;
+        document.getElementById('volPercentageText').innerText = Math.round((val / max) * 100) + '%';
+      } catch (_) {}
     }
 
     async function launchApp(pkg, title, profileIdx) {
-      vibrate();
-      await fetch('/api/launch', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ packageName: pkg, title: title, profileIndex: profileIdx || 1 })
-      });
+      vibrate(24);
+      try {
+        await fetch('/api/launch', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ packageName: pkg, title: title, profileIndex: profileIdx || 1 })
+        });
+      } catch (_) {}
     }
 
     async function sendDeepLink() {
       const q = document.getElementById('queryInput').value.trim();
       if (!q) return;
-      vibrate();
-      await fetch('/api/deeplink', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ query: q, url: q.startsWith('http') ? q : '' })
-      });
-      document.getElementById('queryInput').value = '';
+      vibrate(18);
+      try {
+        await fetch('/api/deeplink', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ query: q, url: q.startsWith('http') ? q : '' })
+        });
+        document.getElementById('queryInput').value = '';
+      } catch (_) {}
     }
 
     async function setProfile(id) {
-      vibrate();
-      await fetch('/api/profile', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ profileId: id })
-      });
-      loadStatus();
+      vibrate(18);
+      try {
+        await fetch('/api/profile', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ profileId: id })
+        });
+        loadStatus();
+      } catch (_) {}
     }
 
     async function setPresetWallpaper(wpId) {
-      vibrate();
-      await fetch('/api/wallpaper', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action: 'preset', wallpaperId: wpId })
-      });
-      document.getElementById('uploadStatusText').innerText = '¡Fondo cambiado exitosamente en la TV!';
-      loadStatus();
+      vibrate(18);
+      try {
+        await fetch('/api/wallpaper', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ action: 'preset', wallpaperId: wpId })
+        });
+        document.getElementById('uploadStatusText').innerText = '¡Fondo cambiado exitosamente en la TV!';
+        loadStatus();
+      } catch (_) {}
     }
 
     function uploadPhonePhoto(input) {
       if (!input.files || !input.files[0]) return;
       const file = input.files[0];
-      document.getElementById('uploadStatusText').innerText = 'Optimizando foto para pantalla de TV...';
+      document.getElementById('uploadStatusText').innerText = 'Optimizando foto para pantalla 4K/FHD...';
 
       const img = new Image();
       const reader = new FileReader();
@@ -952,40 +1363,28 @@ class TvRemoteWebServer(
           const resizedBase64 = canvas.toDataURL('image/jpeg', 0.85);
 
           document.getElementById('uploadStatusText').innerText = 'Enviando a la TV...';
-          await fetch('/api/wallpaper', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ action: 'upload', base64: resizedBase64 })
-          });
-          document.getElementById('uploadStatusText').innerText = '¡Fondo de pantalla actualizado en la TV TCL!';
-          loadStatus();
+          try {
+            await fetch('/api/wallpaper', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ action: 'upload', base64: resizedBase64 })
+            });
+            document.getElementById('uploadStatusText').innerText = '¡Fondo de pantalla actualizado en la TV TCL!';
+            loadStatus();
+          } catch (_) {
+            document.getElementById('uploadStatusText').innerText = 'Error al enviar wallpaper';
+          }
         };
         img.src = e.target.result;
       };
       reader.readAsDataURL(file);
     }
 
-    // Auto-descubrimiento en caso de cambio de IP
-    async function scanForTvIp() {
-      const currentHost = window.location.hostname;
-      const parts = currentHost.split('.');
-      if (parts.length !== 4) return;
-      const subnet = parts[0] + '.' + parts[1] + '.' + parts[2] + '.';
-
-      document.getElementById('reconnectBanner').innerHTML = '<span>Escaneando subred ' + subnet + '* buscando TV...</span>';
-
-      for (let i = 2; i <= 254; i++) {
-        const testIp = subnet + i;
-        fetch('http://' + testIp + ':8888/api/status', { mode: 'no-cors', signal: AbortSignal.timeout(400) })
-          .then(() => {
-            window.location.href = 'http://' + testIp + ':8888/';
-          })
-          .catch(() => {});
-      }
-    }
-
-    setInterval(loadStatus, 4000);
-    loadStatus();
+    window.addEventListener('DOMContentLoaded', () => {
+      initTouchpadGestures();
+      loadStatus();
+      setInterval(loadStatus, 3000);
+    });
   </script>
 </body>
 </html>

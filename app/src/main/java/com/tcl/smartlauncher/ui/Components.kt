@@ -14,8 +14,8 @@ import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.focusable
 import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.ui.input.key.onKeyEvent
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxScope
@@ -168,6 +168,7 @@ fun TVFocusCard(
     content: @Composable BoxScope.(isFocused: Boolean) -> Unit
 ) {
     var isFocused by remember { mutableStateOf(false) }
+    val interactionSource = remember { MutableInteractionSource() }
     val scale by animateFloatAsState(
         targetValue = if (isFocused) scaleTarget else 1.0f,
         animationSpec = spring(
@@ -195,13 +196,26 @@ fun TVFocusCard(
         .shadow(currentElevation, shape, clip = false)
         .clip(shape)
         .border(BorderStroke(currentBorderWidth, currentBorderColor), shape)
-        .onFocusChanged {
-            isFocused = it.isFocused
-            onFocusChanged?.invoke(it.isFocused)
+        .onKeyEvent { event ->
+            if (event.nativeKeyEvent.action == android.view.KeyEvent.ACTION_UP &&
+                (event.nativeKeyEvent.keyCode == android.view.KeyEvent.KEYCODE_DPAD_CENTER ||
+                 event.nativeKeyEvent.keyCode == android.view.KeyEvent.KEYCODE_ENTER ||
+                 event.nativeKeyEvent.keyCode == android.view.KeyEvent.KEYCODE_NUMPAD_ENTER ||
+                 event.nativeKeyEvent.keyCode == android.view.KeyEvent.KEYCODE_BUTTON_A)
+            ) {
+                onClick()
+                true
+            } else {
+                false
+            }
         }
-        .focusable()
+        .onFocusChanged {
+            val focused = it.isFocused || it.hasFocus
+            isFocused = focused
+            onFocusChanged?.invoke(focused)
+        }
         .clickable(
-            interactionSource = remember { MutableInteractionSource() },
+            interactionSource = interactionSource,
             indication = null,
             onClick = onClick
         )
@@ -259,6 +273,7 @@ fun FrostedCapsuleCard(
     val borderWidth = if (isFocused) 2.5.dp else 1.dp
     val elevation = if (isFocused) 12.dp else 2.dp
     val shape = RoundedCornerShape(44.dp) // Forma de píldora / estadio perfecta como en la foto
+    val interactionSource = remember { MutableInteractionSource() }
 
     Surface(
         modifier = modifier
@@ -268,13 +283,26 @@ fun FrostedCapsuleCard(
             .clip(shape)
             .background(currentBgColor)
             .border(BorderStroke(borderWidth, currentBorderColor), shape)
-            .onFocusChanged {
-                isFocused = it.isFocused
-                onFocusChanged?.invoke(it.isFocused)
+            .onKeyEvent { event ->
+                if (event.nativeKeyEvent.action == android.view.KeyEvent.ACTION_UP &&
+                    (event.nativeKeyEvent.keyCode == android.view.KeyEvent.KEYCODE_DPAD_CENTER ||
+                     event.nativeKeyEvent.keyCode == android.view.KeyEvent.KEYCODE_ENTER ||
+                     event.nativeKeyEvent.keyCode == android.view.KeyEvent.KEYCODE_NUMPAD_ENTER ||
+                     event.nativeKeyEvent.keyCode == android.view.KeyEvent.KEYCODE_BUTTON_A)
+                ) {
+                    onClick()
+                    true
+                } else {
+                    false
+                }
             }
-            .focusable()
+            .onFocusChanged {
+                val focused = it.isFocused || it.hasFocus
+                isFocused = focused
+                onFocusChanged?.invoke(focused)
+            }
             .clickable(
-                interactionSource = remember { MutableInteractionSource() },
+                interactionSource = interactionSource,
                 indication = null,
                 onClick = onClick
             ),
@@ -476,12 +504,14 @@ fun BrandCapsuleLogo(
  */
 @Composable
 fun TopActionIconButton(
+    modifier: Modifier = Modifier,
     icon: ImageVector,
     label: String,
     isAlwaysHighlighted: Boolean = false, // Para el botón Search destacado de la foto
     onClick: () -> Unit
 ) {
     var isFocused by remember { mutableStateOf(false) }
+    val interactionSource = remember { MutableInteractionSource() }
 
     val isSolid = isFocused || isAlwaysHighlighted
     val iconColor = if (isSolid) Color(0xFF0F172A) else Color.White
@@ -490,11 +520,25 @@ fun TopActionIconButton(
     Column(
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.Center,
-        modifier = Modifier
-            .onFocusChanged { isFocused = it.isFocused }
-            .focusable()
+        modifier = modifier
+            .onKeyEvent { event ->
+                if (event.nativeKeyEvent.action == android.view.KeyEvent.ACTION_UP &&
+                    (event.nativeKeyEvent.keyCode == android.view.KeyEvent.KEYCODE_DPAD_CENTER ||
+                     event.nativeKeyEvent.keyCode == android.view.KeyEvent.KEYCODE_ENTER ||
+                     event.nativeKeyEvent.keyCode == android.view.KeyEvent.KEYCODE_NUMPAD_ENTER ||
+                     event.nativeKeyEvent.keyCode == android.view.KeyEvent.KEYCODE_BUTTON_A)
+                ) {
+                    onClick()
+                    true
+                } else {
+                    false
+                }
+            }
+            .onFocusChanged {
+                isFocused = it.isFocused || it.hasFocus
+            }
             .clickable(
-                interactionSource = remember { MutableInteractionSource() },
+                interactionSource = interactionSource,
                 indication = null,
                 onClick = onClick
             )
@@ -539,12 +583,14 @@ fun TopActionIconButton(
  */
 @Composable
 fun CategoryTabPill(
+    modifier: Modifier = Modifier,
     title: String,
     isSelected: Boolean,
-    onFocused: () -> Unit,
+    onFocused: (() -> Unit)? = null,
     onClick: () -> Unit
 ) {
     var isFocused by remember { mutableStateOf(false) }
+    val interactionSource = remember { MutableInteractionSource() }
 
     val pillBg = if (isSelected) {
         Color.White.copy(alpha = 0.85f)
@@ -561,17 +607,30 @@ fun CategoryTabPill(
     }
 
     Box(
-        modifier = Modifier
+        modifier = modifier
             .height(32.dp)
             .clip(RoundedCornerShape(16.dp))
             .background(pillBg)
-            .onFocusChanged {
-                isFocused = it.isFocused
-                if (it.isFocused) onFocused()
+            .onKeyEvent { event ->
+                if (event.nativeKeyEvent.action == android.view.KeyEvent.ACTION_UP &&
+                    (event.nativeKeyEvent.keyCode == android.view.KeyEvent.KEYCODE_DPAD_CENTER ||
+                     event.nativeKeyEvent.keyCode == android.view.KeyEvent.KEYCODE_ENTER ||
+                     event.nativeKeyEvent.keyCode == android.view.KeyEvent.KEYCODE_NUMPAD_ENTER ||
+                     event.nativeKeyEvent.keyCode == android.view.KeyEvent.KEYCODE_BUTTON_A)
+                ) {
+                    onClick()
+                    true
+                } else {
+                    false
+                }
             }
-            .focusable()
+            .onFocusChanged {
+                val focused = it.isFocused || it.hasFocus
+                isFocused = focused
+                if (focused) onFocused?.invoke()
+            }
             .clickable(
-                interactionSource = remember { MutableInteractionSource() },
+                interactionSource = interactionSource,
                 indication = null,
                 onClick = onClick
             )
@@ -593,9 +652,11 @@ fun CategoryTabPill(
  */
 @Composable
 fun CategoryAddButton(
+    modifier: Modifier = Modifier,
     onClick: () -> Unit
 ) {
     var isFocused by remember { mutableStateOf(false) }
+    val interactionSource = remember { MutableInteractionSource() }
 
     val scale by animateFloatAsState(
         targetValue = if (isFocused) 1.15f else 1.0f,
@@ -603,7 +664,7 @@ fun CategoryAddButton(
     )
 
     Box(
-        modifier = Modifier
+        modifier = modifier
             .size(38.dp)
             .scale(scale)
             .clip(CircleShape)
@@ -615,10 +676,24 @@ fun CategoryAddButton(
                 ),
                 CircleShape
             )
-            .onFocusChanged { isFocused = it.isFocused }
-            .focusable()
+            .onKeyEvent { event ->
+                if (event.nativeKeyEvent.action == android.view.KeyEvent.ACTION_UP &&
+                    (event.nativeKeyEvent.keyCode == android.view.KeyEvent.KEYCODE_DPAD_CENTER ||
+                     event.nativeKeyEvent.keyCode == android.view.KeyEvent.KEYCODE_ENTER ||
+                     event.nativeKeyEvent.keyCode == android.view.KeyEvent.KEYCODE_NUMPAD_ENTER ||
+                     event.nativeKeyEvent.keyCode == android.view.KeyEvent.KEYCODE_BUTTON_A)
+                ) {
+                    onClick()
+                    true
+                } else {
+                    false
+                }
+            }
+            .onFocusChanged {
+                isFocused = it.isFocused || it.hasFocus
+            }
             .clickable(
-                interactionSource = remember { MutableInteractionSource() },
+                interactionSource = interactionSource,
                 indication = null,
                 onClick = onClick
             ),
