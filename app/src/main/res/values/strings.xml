@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">TCL Smart Launcher</string>
+    <string name="accessibility_service_description">Permite gestionar la interceptación del botón Inicio (Home) y la automatización inteligente de selección de perfiles en Netflix, Prime Video, Disney+, Max y ViX.</string>
+
+    <!-- Header & Status -->
+    <string name="home_active">Botón Home: Personalizado</string>
+    <string name="home_factory">Botón Home: Fábrica TCL</string>
+    <string name="profile_label">Perfil Activo</string>
+
+    <!-- Sections -->
+    <string name="section_last_watched">Continuar viendo (Lo último que miré)</string>
+    <string name="section_quick_shortcuts">Accesos Rápidos y Directos a Perfil</string>
+    <string name="section_installed_apps">Mis Aplicaciones Instaladas</string>
+    <string name="filter_all">Todas las apps</string>
+    <string name="filter_hide_system">Ocultar apps de fábrica</string>
+    <string name="add_shortcut">+ Nuevo Acceso Rápido</string>
+
+    <!-- Actions & Dialogs -->
+    <string name="btn_close">Cerrar</string>
+    <string name="btn_save">Guardar</string>
+    <string name="btn_cancel">Cancelar</string>
+    <string name="btn_delete">Eliminar</string>
+    <string name="btn_open_settings">Abrir Ajustes de Accesibilidad</string>
+    <string name="dialog_home_settings_title">Ajustes del Botón Home / Launcher de Fábrica</string>
+    <string name="dialog_home_settings_desc">Elige si deseas que el botón Inicio (Home) de tu control remoto abra este Launcher Limpio o si prefieres restaurar el Launcher original de fábrica TCL.</string>
+    <string name="dialog_add_shortcut_title">Crear Nuevo Acceso Rápido</string>
+    <string name="dialog_profiles_title">Gestor de Perfiles y Auto-Salto</string>
+</resources>

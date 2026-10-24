@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="bg_light">#D8E2EE</color>
+    <color name="surface_card">#FFFFFF</color>
+    <color name="surface_variant">#EEF2F7</color>
+    <color name="primary_indigo">#2563EB</color>
+    <color name="primary_dark">#1D4ED8</color>
+    <color name="text_primary">#0F172A</color>
+    <color name="text_secondary">#334155</color>
+    <color name="border_card">#94A3B8</color>
+    <color name="border_focused">#1D4ED8</color>
+    <color name="card_focused_bg">#EFF6FF</color>
+</resources>
